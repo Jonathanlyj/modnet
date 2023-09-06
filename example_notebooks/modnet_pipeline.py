@@ -127,7 +127,6 @@ with tf.device('/device:GPU:1'):
                    structure_ids=df_val.index, )
 
     data_val.featurize()
-    data_val.feature_selection(n=200)
     
     # Creating MODNetModel
     model = MODNetModel([[[target_name]]],
@@ -144,12 +143,9 @@ with tf.device('/device:GPU:1'):
     # # Predicting on unlabeled data
     df_test["composition"] = df_test["formula"].map(Composition)
     data_to_predict = MODData(materials = df_test["composition"],
-                   targets = df_test[target_name],
-                   target_names=[target_name],
                    featurizer=basic_featurizer,
                    structure_ids=df_test.index, )
     data_to_predict.featurize()
-    data_to_predict.feature_selection(n=200)
     df_predictions = model.predict(data_to_predict)
     df_test_pred = df_test.merge(df_predictions, how = 'left', left_index = True, right_index = True, suffixes=('_true', '_pred'))
     mae = mean_absolute_error(df_test_pred[target_name+'_true'].values,df_test_pred[target_name+'_pred'].values)
