@@ -1,5 +1,5 @@
-from jarvis.db.figshare import data
-from jarvis.core.atoms import Atoms
+# from jarvis.db.figshare import data
+# from jarvis.core.atoms import Atoms
 import pandas as pd
 from modnet.featurizers.presets import DeBreuck2020Featurizer
 
@@ -97,65 +97,67 @@ def iterate_dataset(folder_path):
 # LOOP 
 target_name = "target"
 mae_dic = {}
-physical_devices = tf.config.list_physical_devices('GPU')
-tf.config.set_visible_devices(physical_devices[1:], 'GPU')
+# physical_devices = tf.config.list_physical_devices('GPU')
+# tf.config.set_visible_devices(physical_devices[1:], 'GPU')
 
 file_path = sys.argv[1]
 target_property = sys.argv[2]
+epochs = 600
+# with tf.device('/device:GPU:1'):
+df_train = pd.read_csv(os.path.join(file_path, target_property, "train.csv"))
+df_test = pd.read_csv(os.path.join(file_path, target_property, "test.csv"))
+df_val = pd.read_csv(os.path.join(file_path, target_property, "val.csv"))
+                        
+df_train["composition"] = df_train["formula"].map(Composition) # maps composition to a pymatgen composition object
 
-with tf.device('/device:GPU:1'):
-    df_train = pd.read_csv(os.path.join(file_path, target_property, "train.csv"))
-    df_test = pd.read_csv(os.path.join(file_path, target_property, "test.csv"))
-    df_val = pd.read_csv(os.path.join(file_path, target_property, "val.csv"))
-                          
-    df_train["composition"] = df_train["formula"].map(Composition) # maps composition to a pymatgen composition object
+# Creating MODData
+data_train = MODData(materials = df_train["composition"],
+                targets = df_train[target_name],
+                target_names=[target_name],
+                featurizer=basic_featurizer,
+                structure_ids=df_train.index, )
 
-    # Creating MODData
-    data_train = MODData(materials = df_train["composition"],
-                   targets = df_train[target_name],
-                   target_names=[target_name],
-                   featurizer=basic_featurizer,
-                   structure_ids=df_train.index, )
+data_train.featurize()
+data_train.feature_selection(n=200)
+df_val["composition"] = df_val["formula"].map(Composition) # maps composition to a pymatgen composition object
+data_val = MODData(materials = df_val["composition"],
+                targets = df_val[target_name],
+                target_names=[target_name],
+                featurizer=basic_featurizer,
+                structure_ids=df_val.index, )
 
-    data_train.featurize()
-    data_train.feature_selection(n=200)
-    df_val["composition"] = df_val["formula"].map(Composition) # maps composition to a pymatgen composition object
-    data_val = MODData(materials = df_val["composition"],
-                   targets = df_val[target_name],
-                   target_names=[target_name],
-                   featurizer=basic_featurizer,
-                   structure_ids=df_val.index, )
+data_val.featurize()
 
-    data_val.featurize()
-    
-    # Creating MODNetModel
-    model = MODNetModel([[[target_name]]],
-                        weights={target_name:1},
-                        num_neurons=[[256],[64],[64],[32]],
-                       )
-    
-    model.fit(data_train,
-              val_data = data_val,
-              epochs = 250,
-              verbose = 1
-             )
-    
-    # # Predicting on unlabeled data
-    df_test["composition"] = df_test["formula"].map(Composition)
-    data_to_predict = MODData(materials = df_test["composition"],
-                   featurizer=basic_featurizer,
-                   structure_ids=df_test.index, )
-    data_to_predict.featurize()
-    df_predictions = model.predict(data_to_predict)
-    df_test_pred = df_test.merge(df_predictions, how = 'left', left_index = True, right_index = True, suffixes=('_true', '_pred'))
-    mae = mean_absolute_error(df_test_pred[target_name+'_true'].values,df_test_pred[target_name+'_pred'].values)
-    print("-" * 40)
-    print(f"{target_property}: {mae}")
-    mae_dic[target_property] = mae
-    df_test_pred.to_csv(os.path.join(file_path, target_property, "test_pred.csv"))   
+# Creating MODNetModel
+model = MODNetModel([[[target_name]]],
+                    weights={target_name:1},
+                    num_neurons=[[256],[128],[64],[8]],
+                    )
 
-    df_mae_all = pd.read_csv(os.path.join(file_path, "mae_all.csv"), index_col = 0)
+model.fit(data_train,
+            val_data = data_val,
+            epochs = epochs,
+            batch_size = 256,
+            verbose = 1
+            )
+
+# # Predicting on unlabeled data
+df_test["composition"] = df_test["formula"].map(Composition)
+data_to_predict = MODData(materials = df_test["composition"],
+                featurizer=basic_featurizer,
+                structure_ids=df_test.index, )
+data_to_predict.featurize()
+df_predictions = model.predict(data_to_predict)
+df_test_pred = df_test.merge(df_predictions, how = 'left', left_index = True, right_index = True, suffixes=('_true', '_pred'))
+mae = mean_absolute_error(df_test_pred[target_name+'_true'].values,df_test_pred[target_name+'_pred'].values)
+print("-" * 40)
+print(f"{target_property}: {mae}")
+if os.path.exists(os.path.join(file_path, f"mae_all_epch_{epochs}.csv")):
+    df_mae_all = pd.read_csv(os.path.join(file_path, f"mae_all_epch_{epochs}.csv"), index_col = 0)
     new_entry = {'target': target_property, 'mae': mae}
     df_mae_all.loc[len(df_mae_all)] = new_entry
-    df_mae_all.to_csv(os.path.join(file_path, "mae_all.csv"))
-    
+else:
+    mae_dic = {'target': [target_property], 'mae': [mae]}
+    df_mae_all = pd.DataFrame.from_dict(mae_dic)
+mae_dic[target_property] = mae
+df_test_pred.to_csv(os.path.join(file_path, target_property, f"test_pred_epch_{epochs}.csv"))   
